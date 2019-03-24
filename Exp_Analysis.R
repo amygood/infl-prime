@@ -1,4 +1,4 @@
-# Packages ----------------------------------------------------------------
+# Packages ----
 library(dplyr)
 library(ggplot2)
 library(ggridges)
@@ -8,7 +8,6 @@ library(lmerTest)
 library(plyr)
 library(RePsychLing)
 library(sets)
-library(sjPlot)
 library(MuMIn)
 
 # Customised ggplot theme
@@ -26,14 +25,15 @@ theme_AGD <- function () {
     )
 }
 
+# Colour palette
 IPPalette <- c("#56B4E9", # z_pl
                "#009E73", # z_o
                "#CC79A7") # z_sing
 
-# Subset and drop levels
+# Function to subset and drop levels
 dsubset <- function (...) { return(droplevels(subset(...))) }
 
-# Check for NAs in any column
+# Function to check for NAs in any column
 nacols <- function(df) {
   colnames(df)[unlist(lapply(df, function(x) anyNA(x)))]
 }
@@ -48,6 +48,7 @@ nacols(infl_prime_data)
 str(infl_prime_data)
 
 # Stimuli properties ----
+# Table of mean/SD frequency and LSA
 infl_prime_design <- ddply(infl_prime_data,
                            .(Prime.Word, Word),
                            summarise,
@@ -63,14 +64,37 @@ ddply(infl_prime_design, .(Prime.Condition, Condition), summarise,
       count = length(Word))
 
 # Remove subjs with <70% accuracy ----
+
 infl_prime_data_pre_low_acc_subj <- infl_prime_data
-subject_accuracy <-  ddply(infl_prime_data, .(Subj), summarise,
+subject_accuracy_pre <-  ddply(infl_prime_data, .(Subj), summarise,
       overall_acc = mean((as.numeric(as.character(Acc)) + as.numeric(as.character(Prime.Acc)))/2))
-ggplot(subject_accuracy, aes(x = Subj, y = overall_acc)) +
+mean_acc <- mean(subject_accuracy_pre$overall_acc)
+sd_acc <- sd(subject_accuracy_pre$overall_acc)
+lowerbound <- mean(subject_accuracy_pre$overall_acc) - 2.5*sd(subject_accuracy_pre$overall_acc)
+upperbound <- mean(subject_accuracy_pre$overall_acc) + 2.5*sd(subject_accuracy_pre$overall_acc)
+InflPrime3AccuracyDistPre <- ggplot(subject_accuracy_pre, aes(x = overall_acc)) +
+  geom_density(fill = "gray") +
+  geom_vline(xintercept = lowerbound, colour = "blue") +
+  geom_vline(xintercept = upperbound, colour = "blue") +
+  geom_vline(xintercept = .7, colour = "red")
+InflPrime3AccuracyDistPre
+ggsave(plot=InflPrime3AccuracyDistPre, filename="output/InflPrime3AccuracyDistPre.png", width = 7, height = 7, dpi=300, device = "png")
+
+ggplot(subject_accuracy_pre, aes(x = Subj, y = overall_acc)) +
          geom_point() +
   geom_hline(yintercept = 0.7, colour = "red")
-infl_prime_data <- merge(infl_prime_data, subject_accuracy, all.x = TRUE)
+infl_prime_data <- merge(infl_prime_data, subject_accuracy_pre, all.x = TRUE)
 infl_prime_data <- subset(infl_prime_data, infl_prime_data$overall_acc > 0.7)
+
+subject_accuracy_post <-  ddply(infl_prime_data, .(Subj), summarise,
+                           overall_acc = mean((as.numeric(as.character(Acc)) + as.numeric(as.character(Prime.Acc)))/2))
+InflPrime3AccuracyDistPost <- ggplot(subject_accuracy_post, aes(x = overall_acc)) +
+  geom_density(fill = "gray") +
+  geom_vline(xintercept = lowerbound, colour = "blue") +
+  geom_vline(xintercept = upperbound, colour = "blue") +
+  geom_vline(xintercept = .7, colour = "red")
+InflPrime3AccuracyDistPost
+ggsave(plot=InflPrime3AccuracyDistPost, filename="output/InflPrime3AccuracyDistPost.png", width = 7, height = 7, dpi=300, device = "png")
 
 length(unique(infl_prime_data_pre_low_acc_subj$Subj)) - length(unique(infl_prime_data$Subj))
 
@@ -108,9 +132,6 @@ infl_prime_data <- subset(infl_prime_data, infl_prime_data$Prime.ISI < 900)
 
 # Trimming by Subj ----
 infl_prime_data_pre_subj_trim <- infl_prime_data
-# ggplot(infl_prime_data, aes(sample = RT)) +
-#          geom_qq() +
-#          facet_wrap(~ Subj)
 
 # Load bounds and remove outliers
 subj_bounds <- read.csv("input/subj_rt_bounds.csv")
@@ -119,9 +140,9 @@ infl_prime_data <- subset(infl_prime_data, RT < S_highBound & RT > S_lowBound)
 
 # Trimming by target ----
 infl_prime_data_pre_target_trim <- infl_prime_data
-# ggplot(infl_prime_data, aes(sample = RT)) +
-# geom_qq() +
-#   facet_wrap(~ Word)
+ggplot(infl_prime_data, aes(sample = RT)) +
+geom_qq() +
+  facet_wrap(~ Word)
 
 # Load bounds and remove outliers
 target_bounds <- read.csv("input/target_rt_bounds.csv")
@@ -259,6 +280,7 @@ final_mod <- lmer(logRT~ Prime.Condition +
                    (1|Prime.Word),
                  data=infl_prime_data_trim)
 summary(final_mod)
+
 r.squaredGLMM(final_mod) # revised statistics based on Nakagawa et al. (2013) paper
 
 # Interpretting coefficients ----
@@ -292,7 +314,43 @@ predTable[predTable$Prime.Condition=="z_sing",]$meanlogRT - predTable[predTable$
 round(predTable[predTable$Prime.Condition=="z_sing",]$meanRT - 
   predTable[predTable$Prime.Condition=="z_pl",]$meanRT,2)
 
-# Visualise effect sizes ----
+# Visualise effect sizes and confidence intervals ----
+
+confint_final_mod <- as.data.frame(confint(final_mod))
+confint_final_mod$name <- rownames(confint_final_mod)
+confint_final_mod$estimate <- NA
+confint_final_mod[confint_final_mod$name == "(Intercept)",]$estimate <- 
+  fixef(final_mod)[["(Intercept)"]]
+confint_final_mod[confint_final_mod$name == "Prime.Conditionz_o",]$estimate <- 
+ fixef(final_mod)[["Prime.Conditionz_o"]]
+confint_final_mod[confint_final_mod$name == "Prime.Conditionz_sing",]$estimate <- 
+  fixef(final_mod)[["Prime.Conditionz_sing"]]
+confint_final_mod[confint_final_mod$name == "cTrial",]$estimate <- 
+  fixef(final_mod)[["cTrial"]]
+confint_final_mod[confint_final_mod$name == "zLSA",]$estimate <- 
+  fixef(final_mod)[["zLSA"]]
+confint_final_mod[confint_final_mod$name == "zPrime.ISI",]$estimate <- 
+  fixef(final_mod)[["zPrime.ISI"]]
+confint_final_mod[confint_final_mod$name == "zDur",]$estimate <- 
+  fixef(final_mod)[["zDur"]]
+confint_final_mod[confint_final_mod$name == "zFreq",]$estimate <- 
+  fixef(final_mod)[["zFreq"]]
+confint_final_mod[confint_final_mod$name == "c.zMFCC",]$estimate <- 
+  fixef(final_mod)[["c.zMFCC"]]
+confint_final_mod[confint_final_mod$name == "c.zLevenshteinDist",]$estimate <- 
+  fixef(final_mod)[["c.zLevenshteinDist"]]
+confint_final_mod[confint_final_mod$name == "c.zPrime.Freq",]$estimate <- 
+  fixef(final_mod)[["c.zPrime.Freq"]]
+confint_final_mod[confint_final_mod$name == "c.zPrime.logRT",]$estimate <- 
+  fixef(final_mod)[["c.zPrime.logRT"]]
+
+confint_final_mod$estimate <- round(confint_final_mod$estimate,3)
+confint_final_mod$`2.5 %` <- round(confint_final_mod$`2.5 %`,3)
+confint_final_mod$`97.5 %` <- round(confint_final_mod$`97.5 %`,3)
+
+confint_final_mod <- subset(confint_final_mod, !(confint_final_mod$name %in% c("(Intercept)", ".sigma", ".sig03", ".sig02", ".sig01")))
+
+
 fe_labels <- c("Prime.Conditionz_o" = "Phon. cntrl",
               "Prime.Conditionz_sing" = "Sing. cntrl",
               "cTrial" = "Trial",                     
@@ -304,21 +362,9 @@ fe_labels <- c("Prime.Conditionz_o" = "Phon. cntrl",
               "c.zLevenshteinDist" = "Levenshtein Dist.",          
               "c.zPrime.Freq" = "Prime freq.",             
               "c.zPrime.logRT" = "Prime RT")
-fe_plot <- plot_model(final_mod, type="est")$data
-fe_plot$term <- factor(fe_plot$term, levels = c("c.zPrime.logRT",
-                                                "c.zPrime.Freq",
-                                                "c.zLevenshteinDist",
-                                                "c.zMFCC",
-                                                "zFreq",
-                                                "zDur",
-                                                "zPrime.ISI",
-                                                "zLSA",
-                                                "cTrial",
-                                                "Prime.Conditionz_o",
-                                                "Prime.Conditionz_sing"))
-InflPrimeFEplot <- ggplot(fe_plot, aes(x=term, y=estimate)) +
+InflPrimeFEplot <- ggplot(confint_final_mod, aes(x=name, y=estimate)) +
   geom_point(size=2) + 
-  geom_errorbar(aes(ymin=conf.low, ymax=conf.high), width=0.2, size=1) +
+  geom_errorbar(aes(ymin=`2.5 %`, ymax=`97.5 %`), width=0.2, size=1) +
   geom_hline(yintercept=0,colour="red", size=1, linetype=2) +
   ylab("Estimate") +
   xlab("Fixed effect") +
@@ -330,7 +376,6 @@ InflPrimeFEplot
 ggsave(plot=InflPrimeFEplot, filename="output/fixedeffectplot.pdf", width = 9, height = 7, dpi=300, device = "pdf")
 
 # Plot random effects ----
-plot_model(final_mod, type="re", facet.grid = FALSE)
 
 # Summary of data removal
 nrow(infl_prime_data_pre_acc)
@@ -352,7 +397,7 @@ InflPrime3Boxplot <- ggplot() +
   geom_boxplot(data=infl_prime_data_trim, aes(x=Prime.Condition, y=logRT, fill=Prime.Condition))+
   geom_hline(yintercept = median(infl_prime_data_trim[infl_prime_data_trim$Prime.Condition=="z_pl",]$logRT), colour="black", linetype=2, size = 1) +
   xlab("Prime condition") +
-  ylab("Log-transformed RT") +
+  ylab("Log2-transformed RT") +
   scale_fill_manual(values=alpha(IPPalette,0.9)) +
   guides(fill=FALSE) +
   theme_AGD() +
@@ -366,7 +411,7 @@ ggsave(plot=InflPrime3Boxplot, filename="output/boxplot.pdf", width = 7, height 
 
 InflPrime3Ridge <- ggplot(data=infl_prime_data_trim, aes(y=Prime.Condition, x=logRT, fill=Prime.Condition)) + geom_density_ridges(scale = 0.5) +
   ylab("Prime condition") +
-  xlab("Log-transformed RT") +
+  xlab("Log2-transformed RT") +
   guides(fill=FALSE) +
   theme_AGD() +
   theme_bw(base_size = 20) +
@@ -379,4 +424,3 @@ InflPrime3Ridge <- ggplot(data=infl_prime_data_trim, aes(y=Prime.Condition, x=lo
   coord_flip()
 InflPrime3Ridge
 ggsave(plot=InflPrime3Ridge, filename="output/ridgeplot.pdf", width = 7, height = 7, dpi=300, device = "pdf")
-
